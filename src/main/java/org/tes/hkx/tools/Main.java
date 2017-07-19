@@ -44,6 +44,24 @@ public class Main {
 		}, recursive ? TrueFileFilter.INSTANCE : null);
 		return files;
 	}
+	
+	public static void upgradeBinaryAssets(String InputFileAbsolutePath, String OutputFileAbsolutePath)
+			throws Exception {
+
+		// String upgradedProjectAbsolutePath = config.skyrimExportFolderPath +
+		// pHKX.getName();
+		String[] assetCc2commands = { "-r4101", "\"" + InputFileAbsolutePath + "\"",
+				"\"" + OutputFileAbsolutePath + "\"" };
+		System.out.println(assetCc2.exec(assetCc2commands));
+		// Convert to XML
+		File upgradedFile = new File(OutputFileAbsolutePath);
+		String xmlUpgradedFilePath = upgradedFile.getParentFile().getAbsolutePath() + File.separator
+				+ FilenameUtils.removeExtension(upgradedFile.getName()) + ".xml";
+		String[] HkxCmdCommands = { "Convert", "-v:XML", "\"" + OutputFileAbsolutePath + "\"",
+				"\"" + xmlUpgradedFilePath + "\"" };
+		System.out.println(hkxcmd.exec(HkxCmdCommands));
+	}
+
 
 	public static void upgradeFileWithAssetCC2(String InputFileAbsolutePath, String OutputFileAbsolutePath)
 			throws Exception {
@@ -109,7 +127,7 @@ public class Main {
 		System.out.println("Hello from HBT To Skyrim Project Converter!");
 		for (String i : args)
 			System.out.println("Argument: " + i);
-		if (args.length == 6) {
+		if (args.length == 8) {
 			config = new ConfigHolder(args);
 			// Get the project file
 			Collection<File> pFile = getHKXFiles(config.HBT_PROJECT_EXPORT_DIR, false);
@@ -174,7 +192,7 @@ public class Main {
 				try {
 					String outputFile = FilenameUtils.concat(config.skyrimExportCharacterAssetsFolderPath,
 							pCAFile.getName());
-					upgradeFileWithAssetCC2(pCAFile.getAbsolutePath(), outputFile);
+					upgradeBinaryAssets(pCAFile.getAbsolutePath(), outputFile);
 				} catch (Exception e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
@@ -238,22 +256,9 @@ public class Main {
 				}
 			}
 
-			for (File pCAFile : pCAFiles) {
-				try {
-					String outputFile = FilenameUtils.concat(config.skyrimExportCharacterAssetsFolderPath,
-							pCAFile.getName());
-					String[] HkxCmdCommands = { "Convert", "-v:WIN32", "\"" + outputFile.replace(".hkx", ".xml") + "\"",
-							"\"" + outputFile + "\"" };
-					System.out.println(hkxcmd.exec(HkxCmdCommands));
-				} catch (Exception e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-			}
-
 			// Cache
 			AnimDataGen.generate(new File(updatedProjectFile.getAbsolutePath().replace(".hkx", ".xml")),
-					new File(animationCachePath), new File(config.skyrimExportFolderPath), null, null);
+					new File(animationCachePath), new File(config.skyrimExportFolderPath), null, null, config.oblivionMode, config.OutputProjectDataRelative);
 			System.out.println("Cache regenerated");
 		}
 	}

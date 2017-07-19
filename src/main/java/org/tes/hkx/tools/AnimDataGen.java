@@ -18,27 +18,36 @@ import org.apache.commons.io.filefilter.TrueFileFilter;
 import org.tes.hkx.lib.HkobjectType;
 import org.tes.hkx.lib.ext.hkaSplineCompressedAnimation;
 import org.tes.hkx.lib.ext.hkbClipGenerator;
+import org.tes.hkx.lib.ext.hkbStateMachine;
+import org.tes.hkx.lib.ext.hkbStateMachineStateInfo;
+import org.tes.hkx.lib.ext.hkbStateMachineTransitionInfoArray;
 import org.tes.hkx.lib.ext.innerAnnotation;
+import org.tes.hkx.lib.ext.innerStateTransitionInfo;
 import org.tes.hkx.lib.ext.innerTrackInfo;
 import org.tes.hkx.lib.ext.innerTrigger;
 import org.tes.hkx.model.HKProject;
 import org.tes.hkx.model.files.HkAnimationFile;
 import org.tes.hkx.model.files.HkBehaviorFile;
 import org.tes.hkx.model.files.HkCharacterFile;
+import org.tes.hkx.model.visitors.GraphFSMVisitor;
 import org.tes.tools.animdataparser.AnimDataFile;
 import org.tes.tools.animdataparser.AnimSetDataFile;
+import org.tes.tools.animdataparser.AttackDataBlock;
 import org.tes.tools.animdataparser.ClipGeneratorBlock;
 import org.tes.tools.animdataparser.ClipMovementData;
+import org.tes.tools.animdataparser.ProjectAttackBlock;
+import org.tes.tools.animdataparser.ProjectAttackListBlock;
 import org.tes.tools.animdataparser.ProjectBlock;
 import org.tes.tools.animdataparser.ProjectDataBlock;
 
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.TreeMultimap;
 
 public class AnimDataGen {
 
 	public static void generate(File projectFile, File animCacheDir, File outputDir, File sourceAnimData,
-			File sourceAnimSetData) {
+			File sourceAnimSetData, boolean oblivionMode, String AnimRelPathOutput) {
 		try {
 			System.out.println("Hello World!");
 			System.out.println(projectFile.getAbsolutePath());
@@ -88,6 +97,7 @@ public class AnimDataGen {
 			// Check cache files
 			String projectName = FilenameUtils.getBaseName(project.getProjectFile().getFileName()) + ".txt";
 			ProjectBlock dataBlock = new ProjectBlock();
+			ProjectAttackBlock attackDataBlock = new ProjectAttackBlock();
 			ProjectDataBlock dataMovementBlock = new ProjectDataBlock();
 			dataBlock.setHasAnimationCache(!keyFiles.isEmpty());
 			dataBlock.setHasProjectFiles(!project.getCharacterFiles().isEmpty());
@@ -158,8 +168,19 @@ public class AnimDataGen {
 				dataMovementBlock.getMovementData().add(thisMovementData);
 				index++;
 			}
-			// behaviors has multiple nodes for the same clip
+			
+			Map<Integer, String> attackEvents = new HashMap<>();
+			// behavior has multiple nodes for the same clip
 			for (HkBehaviorFile bf : project.getBehaviors(character)) {
+				//Attacks Cache
+				int eventId = 0;
+				for (String event : bf.getGraphData().getStringData().getEventNames()) {
+					if (event.startsWith("attackStart")) {
+						attackEvents.put(eventId, event);
+					}
+					eventId++;
+				}
+				ArrayListMultimap<hkbStateMachineStateInfo, hkbClipGenerator> statesClipMap = ArrayListMultimap.create();
 				for (HkobjectType obj : bf.getObjects()) {
 					if (obj instanceof hkbClipGenerator) {
 						hkbClipGenerator clip = (hkbClipGenerator) obj;
@@ -184,7 +205,7 @@ public class AnimDataGen {
 						if (thisAnim.getAnnotationTracks() != null) {
 							for (innerTrackInfo at : thisAnim.getAnnotationTracks()) {
 								for (innerAnnotation an : at.getAnnotations()) {
-									items.put(Float.parseFloat(an.getTime()), an.getText());
+									items.put(Float.parseFloat(an.getTime()), an.getText().replaceAll("\\p{C}", "").replaceAll(": ","_").replaceAll(":", "_"));
 								}
 							}
 						}
@@ -204,14 +225,110 @@ public class AnimDataGen {
 							b.getEvents().getStrings().add(e.getValue() + ":" + e.getKey());
 						}
 						dataBlock.getClips().add(b);
+						
+						//State-Clip Map
+						statesClipMap.put(clip.findParentWithClass(hkbStateMachineStateInfo.class), clip);
+					}
+					//Find all clips who are involved into TO/Nested TO attack state clip playing. Tricky
+					else if (obj instanceof hkbStateMachineTransitionInfoArray) {
+						hkbStateMachineTransitionInfoArray transition = (hkbStateMachineTransitionInfoArray)obj;
+						for (innerStateTransitionInfo inner : transition.getTransitions()) {
+							if (attackEvents.get(Integer.valueOf(inner.getEventId()))!=null) {
+								AttackDataBlock attackClipData = new AttackDataBlock();
+								System.out.println("Found Attack Transition: "+inner);
+								attackClipData.setEventName(attackEvents.get(Integer.valueOf(inner.getEventId())));
+								attackClipData.setUnk1(0);
+								hkbStateMachine fsm = inner.findParentWithClass(hkbStateMachine.class);
+								hkbStateMachineStateInfo state = fsm.findState(Integer.valueOf(inner.getToStateId()));
+								hkbStateMachine innerfsm = state.accept(new GraphFSMVisitor());
+								if (innerfsm!= null) {
+									hkbStateMachineStateInfo innerState = innerfsm.findState(Integer.valueOf(inner.getToNestedStateId()));
+									if (innerState!=null)
+										state = innerState;
+								}
+								for (hkbClipGenerator clip : statesClipMap.get(state)) {
+									System.out.println("Related clip: "+clip);
+									
+									attackClipData.clips.getStrings().add(clip.getName());
+								}
+								attackDataBlock.getAttackData().getAttackData().add(attackClipData);
+								attackDataBlock.getAttackData().blocks=attackDataBlock.getAttackData().blocks+1;
+							}
+ 						}
 					}
 				}
+	
 			}
+			
+			HkCRC crc = new HkCRC();
+			
+			for (HkAnimationFile f : project.getAnimationFiles(character)) {		
+				String relative = outputDir.toURI().relativize(new File(f.getFileName()).toURI()).getPath();
+				relative = FilenameUtils.normalizeNoEndSeparator(relative);
+				
+				String outputPath = FilenameUtils.concat(FilenameUtils.normalizeNoEndSeparator(AnimRelPathOutput),FilenameUtils.getPathNoEndSeparator(relative));
+				String outputName = FilenameUtils.getBaseName(relative);
+				
+				System.out.println(outputPath.toLowerCase());
+				System.out.println(outputName.toLowerCase());
+				
+				attackDataBlock.getCrc32Data().getStrings().add(String.valueOf(
+						Long.decode("0x" + crc.compute(outputPath.toLowerCase()))));
+				attackDataBlock.getCrc32Data().getStrings().add(String.valueOf(
+						Long.decode("0x" + crc.compute(outputName.toLowerCase()))));
+				attackDataBlock.getCrc32Data().getStrings().add("7891816");
+				
+			}
+			
+			//ANIMSETDATA
+			// create subdirs
+			String animSetDataPath = FilenameUtils.concat(outputDir.getAbsolutePath(), "animationsetdata");
+			String animSetDataProjectPath = FilenameUtils.concat(animSetDataPath, FilenameUtils.getBaseName(project.getProjectFile().getFileName())+"Data");
+			FileUtils.forceMkdir(new File(animSetDataProjectPath));
+			String animSetDataFileName = FilenameUtils.concat(animSetDataProjectPath, projectName);
+			PrintWriter out = new PrintWriter(animSetDataFileName);
+			out.write("FullCharacter.txt");
+			out.flush();
+			out.close();
+			
+			out = new PrintWriter(FilenameUtils.concat(animSetDataProjectPath,"FullCharacter.txt"));
+			out.write(attackDataBlock.getBlock());
+			out.flush();
+			out.close();
+			
+			
+			
+			ProjectAttackListBlock p = new ProjectAttackListBlock();
+			p.getProjectFiles().getStrings().add("FullCharacter.txt");
+			p.getProjectAttackBlocks().add(attackDataBlock);
+			
+			// Add to animData
+			Integer adataIndex = 0;
+			boolean afound = false;
+			String innerProjectName = FilenameUtils.concat(FilenameUtils.getBaseName(project.getProjectFile().getFileName())+"Data",projectName);
+			for (String projectIterator : animSetData.getProjectsList().getStrings()) {
+				if (projectIterator.equals(innerProjectName)) {
+					afound = true;
+					animSetData.getProjectAttackList().set(adataIndex, p);
+				}
+				adataIndex++;
+			}
+			if (!afound) {
+				animSetData.getProjectsList().getStrings().add(innerProjectName);
+				animSetData.getProjectAttackList().add(p);
+			}
+			String newAnimSetDataPath = FilenameUtils.concat(outputDir.getAbsolutePath(), "animationsetdatasinglefile.txt");
+			out = new PrintWriter(newAnimSetDataPath);
+			out.write(animSetData.toString());
+			out.flush();
+			out.close();
+			
+			//ANIMDATA
 			// create subdirs
 			String animDataPath = FilenameUtils.concat(outputDir.getAbsolutePath(), "animationdata");
 			String animDataFilePath = FilenameUtils.concat(animDataPath, projectName);
 			FileUtils.forceMkdir(new File(animDataPath));
-			PrintWriter out = new PrintWriter(animDataFilePath);
+			out = new PrintWriter(animDataFilePath);
 			out.write(dataBlock.getBlock());
 			out.flush();
 			out.close();
@@ -246,6 +363,11 @@ public class AnimDataGen {
 			out.write(animData.toString());
 			out.flush();
 			out.close();
+			
+			//ANIMSETDATA
+			
+			
+			
 
 			// System.out.println("############################ANIMSETDATA#########################################");
 			// // // int numLines = 0;

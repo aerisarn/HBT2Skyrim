@@ -9,6 +9,8 @@ public class ConfigHolder {
 	public String HBT_BEHAVIORS_EXPORT_DIR;
 	public String HBT_ANIMATIONS_EXPORT_DIR;
 	public String HBT_PROJECT_DIR;
+	public boolean oblivionMode;
+	public String OutputProjectDataRelative;
 	
 	//Project Name
 	public String HBT_PROJECT_NAME;
@@ -31,5 +33,7 @@ public class ConfigHolder {
 		HBT_BEHAVIORS_EXPORT_DIR = array[3];
 		HBT_ANIMATIONS_EXPORT_DIR = array[4];
 		HBT_PROJECT_DIR = array[5];
+		oblivionMode = Boolean.parseBoolean(array[6]);
+		OutputProjectDataRelative = array[7];
 	}
 }
