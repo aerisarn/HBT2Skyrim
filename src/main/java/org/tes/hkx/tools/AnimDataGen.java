@@ -46,6 +46,20 @@ import com.google.common.collect.TreeMultimap;
 
 public class AnimDataGen {
 
+	public static String getEventName(String eventName, boolean OblivionMode) {
+		String sanitized = eventName.replaceAll("\\p{C}", "")
+		.replaceAll(": ", "_").replaceAll(":", "_");
+		if (OblivionMode) {
+			if (sanitized.toLowerCase().contains("enum")) {
+				if (sanitized.toLowerCase().contains("left"))
+					return "syncLeft";
+				if (sanitized.toLowerCase().contains("right"))
+					return "syncRight";
+			}
+		}
+		return sanitized;
+	}
+	
 	public static void generate(File projectFile, File animCacheDir, File outputDir, File sourceAnimData,
 			File sourceAnimSetData, boolean oblivionMode, String AnimRelPathOutput) {
 		try {
@@ -77,6 +91,19 @@ public class AnimDataGen {
 			}
 
 			System.out.println("Searching cache files");
+			
+			int c =0;
+			int hagind = -1;
+			for (String s: animSetData.getProjectsList().getStrings()) {
+				if (s.toLowerCase().contains("hag")) {
+					hagind = c;
+				}
+				c++;
+			}
+			if (hagind>0) {
+				ProjectAttackListBlock l = animSetData.getProjectAttackList().get(hagind);
+				l.toString();
+			}
 
 			Collection<File> keyFiles = FileUtils.listFiles(animCacheDir, new IOFileFilter() {
 				@Override
@@ -205,7 +232,14 @@ public class AnimDataGen {
 						if (thisAnim.getAnnotationTracks() != null) {
 							for (innerTrackInfo at : thisAnim.getAnnotationTracks()) {
 								for (innerAnnotation an : at.getAnnotations()) {
-									items.put(Float.parseFloat(an.getTime()), an.getText().replaceAll("\\p{C}", "").replaceAll(": ","_").replaceAll(":", "_"));
+									String eventName = getEventName(an.getText(), oblivionMode);
+									items.put(Float.parseFloat(an.getTime()), eventName);
+									if (oblivionMode && eventName.contains("sync")) {
+										if (eventName.contains("Left"))
+											items.put(Float.parseFloat(an.getTime()), "FootLeft");
+										if (eventName.contains("Right"))
+											items.put(Float.parseFloat(an.getTime()), "FootRight");
+									}
 								}
 							}
 						}
@@ -248,7 +282,6 @@ public class AnimDataGen {
 								}
 								for (hkbClipGenerator clip : statesClipMap.get(state)) {
 									System.out.println("Related clip: "+clip);
-									
 									attackClipData.clips.getStrings().add(clip.getName());
 								}
 								attackDataBlock.getAttackData().getAttackData().add(attackClipData);
@@ -275,7 +308,7 @@ public class AnimDataGen {
 				attackDataBlock.getCrc32Data().getStrings().add(String.valueOf(
 						Long.decode("0x" + crc.compute(outputPath.toLowerCase()))));
 				attackDataBlock.getCrc32Data().getStrings().add(String.valueOf(
-						Long.decode("0x" + crc.compute(outputName.toLowerCase()))));
+						Long.decode("0x" + crc.compute(outputName))));
 				attackDataBlock.getCrc32Data().getStrings().add("7891816");
 				
 			}
@@ -324,6 +357,29 @@ public class AnimDataGen {
 			out.close();
 			
 			//ANIMDATA
+			String[] lastLine;
+			// fix
+			for (ClipMovementData thisMovementData : dataMovementBlock.getMovementData()) {
+				if (thisMovementData.getTraslations().getStrings().isEmpty()) {
+					thisMovementData.getTraslations().getStrings().add(thisMovementData.getDuration() + " 0 0 0");
+				} else {
+					lastLine = thisMovementData.getTraslations().getStrings().get(thisMovementData.getTraslations().getStrings().size()-1).split(" ");
+					if (lastLine[0] != thisMovementData.getDuration()) {
+						thisMovementData.getTraslations().getStrings().add(thisMovementData.getDuration() + 
+								" " +lastLine[1]+" "+ lastLine[2]+" " +lastLine[3]);
+					}
+				}
+				if (thisMovementData.getRotations().getStrings().isEmpty()) {
+					thisMovementData.getRotations().getStrings().add(thisMovementData.getDuration() + " 0 0 0 1");
+				} else {
+					lastLine = thisMovementData.getRotations().getStrings().get(thisMovementData.getRotations().getStrings().size()-1).split(" ");
+					if (lastLine[0] != thisMovementData.getDuration()) {
+						thisMovementData.getRotations().getStrings().add(thisMovementData.getDuration() + 
+								" " +lastLine[1]+" "+ lastLine[2]+" " +lastLine[3]+" " +lastLine[4]);
+					}
+				}
+			}
+
 			// create subdirs
 			String animDataPath = FilenameUtils.concat(outputDir.getAbsolutePath(), "animationdata");
 			String animDataFilePath = FilenameUtils.concat(animDataPath, projectName);

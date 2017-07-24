@@ -1,7 +1,6 @@
 package org.tes.hkx.tools;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -13,8 +12,7 @@ import org.apache.commons.io.filefilter.IOFileFilter;
 import org.apache.commons.io.filefilter.TrueFileFilter;
 import org.tes.hkx.model.HKProject;
 import org.tes.hkx.model.files.HkFilesFactory;
-import org.tes.hkx.model.files.HkProjectFile;
-import org.eclipse.persistence.jaxb.JAXBContextFactory;
+import org.tes.hkx.tools.ConfigHolder;
 
 @SuppressWarnings("unused")
 public class Main {

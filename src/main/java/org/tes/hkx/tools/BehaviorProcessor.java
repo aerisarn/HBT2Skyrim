@@ -7,11 +7,14 @@ import java.util.List;
 import java.util.Set;
 
 import org.tes.hkx.lib.HkobjectType;
+import org.tes.hkx.lib.ext.BSCyclicBlendTransitionGenerator;
+import org.tes.hkx.lib.ext.BSIsActiveModifier;
 import org.tes.hkx.lib.ext.BSRagdollContactListenerModifier;
 import org.tes.hkx.lib.ext.BSSpeedSamplerModifier;
 import org.tes.hkx.lib.ext.hkMemoryResourceContainer;
 import org.tes.hkx.lib.ext.hkMemoryResourceHandle;
 import org.tes.hkx.lib.ext.hkRootLevelContainer;
+import org.tes.hkx.lib.ext.hkbBlenderGenerator;
 import org.tes.hkx.lib.ext.hkbBoneWeightArray;
 import org.tes.hkx.lib.ext.hkbEventDrivenModifier;
 import org.tes.hkx.lib.ext.hkbKeyframeBonesModifier;
@@ -19,6 +22,7 @@ import org.tes.hkx.lib.ext.hkbModifierList;
 import org.tes.hkx.lib.ext.hkbPoseMatchingGenerator;
 import org.tes.hkx.lib.ext.hkbPoweredRagdollControlsModifier;
 import org.tes.hkx.lib.ext.hkbRigidBodyRagdollControlsModifier;
+import org.tes.hkx.lib.ext.hkbStateMachineStateInfo;
 import org.tes.hkx.lib.ext.hkbVariableBindingSet;
 import org.tes.hkx.lib.ext.hkxCamera;
 import org.tes.hkx.lib.ext.hkxIndexBuffer;
@@ -50,6 +54,8 @@ public class BehaviorProcessor {
 	
 	static String RAGDOLL_EVENT_NAME = "Ragdoll";
 
+	static String F_BLEND_PARAMETER_PATH = "fBlendParameter";
+	
 	static String STATE_MOD_PATH = "state";
 	static String DIRECTION_MOD_PATH = "direction";
 	static String SPEED_MOD_PATH = "goalSpeed";
@@ -58,6 +64,13 @@ public class BehaviorProcessor {
 	static String FULL_RAGDOLL_EDM_NAME = "FullRagdollEDM";
 	static String POWERED_RAGDOLL_NO_MATCHING = "PoweredRagdollNoMatching";
 	static String POWERED_RAGDOLL_MATCHING = "PoweredRagdollMatching";
+	
+	static String EVENT_CYCLIC_FREEZE = "CyclicFreeze";
+	static String EVENT_CYCLIC_CROSS_BLEND = "CyclicCrossBlend";
+	
+	static String IS_ATTACKING_VARIABLE_NAME = "IsAttacking";
+	static String IS_ATTACK_READY_VARIABLE_NAME = "IsAttackReady";
+	static String BSIsActivePath0 = "bIsActive0";
 	
 
 	static void process(HKProject project) {
@@ -105,7 +118,13 @@ public class BehaviorProcessor {
 					int speedId = -1;
 					int speedSampledId = -1;
 					
+					int eCyclicFreeze = -1;
+					int eCyclicCrossBlend = -1;
+					
 					int ragdollEventId = -1;
+					
+					int isAttackingId = -1;
+					int isAttackReadyId = -1;
 					
 					int index = 0;
 					for (String variable : behavior.getGraphData().getStringData().getVariableNames()) {
@@ -122,6 +141,12 @@ public class BehaviorProcessor {
 						if (variable.equals(SPEED_SAMPLED_VARIABLE_NAME)) {
 							speedSampledId = index;
 						}
+						if (variable.equals(IS_ATTACKING_VARIABLE_NAME)) {
+							isAttackingId = index;
+						}
+						if (variable.equals(IS_ATTACK_READY_VARIABLE_NAME)) {
+							isAttackReadyId = index;
+						}
 						index++;
 					}
 					
@@ -129,6 +154,10 @@ public class BehaviorProcessor {
 					for (String event : behavior.getGraphData().getStringData().getEventNames()) {
 						if (event.equals(RAGDOLL_EVENT_NAME))
 							ragdollEventId = index;
+						if (event.equals(EVENT_CYCLIC_FREEZE))
+							eCyclicFreeze = index;
+						if (event.equals(EVENT_CYCLIC_CROSS_BLEND))
+							eCyclicCrossBlend = index;
 						index++;
 					}
 					
@@ -137,13 +166,22 @@ public class BehaviorProcessor {
 					}
 
 					hkbModifierList toReplace = null;
+					hkbModifierList toAddIsAttacking = null;
+					hkbModifierList toAddIsAttackReady = null;
 					hkbKeyframeBonesModifier toReplaceBSRagdollContactListener = null;
 					hkbEventDrivenModifier fullyRagdollEDMSetUserData = null;
 					hkbPoseMatchingGenerator poseMatcher = null;
 					Set<hkbPoweredRagdollControlsModifier> PRCMs = new HashSet<>();
 					Set<hkbRigidBodyRagdollControlsModifier> RBRCMs = new HashSet<>();
-
+					hkbBlenderGenerator MT_Directional = null;
+					
+					
 					for (HkobjectType o : behavior.getObjects()) {
+						if (o instanceof hkbBlenderGenerator) {
+							hkbBlenderGenerator bo = (hkbBlenderGenerator)o;
+							if (bo.getName().equals("MT_DirectionalBlend")) 
+								MT_Directional = bo;
+						}
 						if (o instanceof hkbPoseMatchingGenerator) {
 							poseMatcher = (hkbPoseMatchingGenerator)o;
 						}
@@ -160,6 +198,12 @@ public class BehaviorProcessor {
 								toReplace = m;
 								foundBSSpeedSamplerModifier = true;
 							}
+							if (m.getName().equals("BSIsActiveModifier_IsAttacking")) {
+								toAddIsAttacking = m;
+							}
+							if (m.getName().equals("BSIsActiveModifier_IsAttackReady")) {
+								toAddIsAttackReady = m;
+							}
 						}
 						if (o instanceof hkbKeyframeBonesModifier) {
 							hkbKeyframeBonesModifier m = (hkbKeyframeBonesModifier)o;
@@ -174,6 +218,41 @@ public class BehaviorProcessor {
 							}
 						}
 					}
+					if (MT_Directional != null) {
+						BSCyclicBlendTransitionGenerator bsc = behavior.createObject(BSCyclicBlendTransitionGenerator.class);
+									
+						innerEvent ev = new innerEvent();
+						ev.setId(String.valueOf(eCyclicFreeze));
+						ev.setPayload("null");
+						bsc.setEventToFreezeBlendValue(ev);
+						
+						innerEvent ev2 = new innerEvent();
+						ev2.setId(String.valueOf(eCyclicCrossBlend));
+						ev2.setPayload("null");
+						bsc.setEventToCrossBlend(ev2);
+						
+						innerVariableBinding blendDirectionBind = new innerVariableBinding();
+						blendDirectionBind.setMemberPath(F_BLEND_PARAMETER_PATH);
+						blendDirectionBind.setVariableIndex(String.valueOf(directionId));
+						
+						hkbVariableBindingSet blendBindArray = behavior.createObject(hkbVariableBindingSet.class);
+						blendBindArray.addToBindings(blendDirectionBind);
+						
+						bsc.setVariableBindingSet(blendBindArray);
+						
+						for (IHkVisitable po : MT_Directional.getParents()) {
+
+							if (po instanceof IHkContainer) {
+								((IHkContainer) po).remove(MT_Directional);
+							}
+							if (po instanceof hkbStateMachineStateInfo) {
+								((hkbStateMachineStateInfo) po).setGenerator(bsc);
+							}
+						}
+						bsc.setPBlenderGenerator(MT_Directional);
+						
+					}
+					
 					if (poseMatcher != null) {
 						poseMatcher.setStartMatchingEventId(String.valueOf(ragdollEventId));
 					}
@@ -211,6 +290,52 @@ public class BehaviorProcessor {
 					
 					if (fullyRagdollEDMSetUserData != null) {
 						fullyRagdollEDMSetUserData.setUserData("1"); //hardcoded
+					}
+					
+					if (toAddIsAttacking != null) {
+						BSIsActiveModifier b = behavior.createObject(BSIsActiveModifier.class);
+						b.setName(toAddIsAttacking.getName());
+						innerVariableBinding BSIsActiveBind = new innerVariableBinding();
+						BSIsActiveBind.setMemberPath(BSIsActivePath0);
+						BSIsActiveBind.setVariableIndex(String.valueOf(isAttackingId));
+						
+						hkbVariableBindingSet blendBindArray = behavior.createObject(hkbVariableBindingSet.class);
+						blendBindArray.addToBindings(BSIsActiveBind);
+						
+						b.setVariableBindingSet(blendBindArray);
+						
+						for (IHkVisitable po : toAddIsAttacking.getParents()) {
+							System.out.println(po.getClass().getName());
+							if (po instanceof IHkContainer) {
+								((IHkContainer) po).remove(toAddIsAttacking);
+							}
+							if (po instanceof hkbModifierList) {
+								((hkbModifierList) po).addToModifiers(b);
+							}
+						}
+					}
+					
+					if (toAddIsAttackReady != null) {
+						BSIsActiveModifier b = behavior.createObject(BSIsActiveModifier.class);
+						b.setName(toAddIsAttackReady.getName());
+						innerVariableBinding BSIsActiveBind = new innerVariableBinding();
+						BSIsActiveBind.setMemberPath(BSIsActivePath0);
+						BSIsActiveBind.setVariableIndex(String.valueOf(isAttackReadyId));
+						
+						hkbVariableBindingSet blendBindArray = behavior.createObject(hkbVariableBindingSet.class);
+						blendBindArray.addToBindings(BSIsActiveBind);
+						
+						b.setVariableBindingSet(blendBindArray);
+						
+						for (IHkVisitable po : toAddIsAttackReady.getParents()) {
+							System.out.println(po.getClass().getName());
+							if (po instanceof IHkContainer) {
+								((IHkContainer) po).remove(toAddIsAttackReady);
+							}
+							if (po instanceof hkbModifierList) {
+								((hkbModifierList) po).addToModifiers(b);
+							}
+						}
 					}
 					
 					if (toReplaceBSRagdollContactListener != null) {
